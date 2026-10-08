@@ -1,7 +1,8 @@
-# ConsultaCPFCNPJ
+# ConsultaCPFCNPJ (PHP)
 
-Ferramenta de linha de comando para encontrar **processos judiciais em que um CPF ou CNPJ figura como parte**.
-A primeira versão consulta o **Tribunal de Justiça de São Paulo (TJSP)** via e-SAJ, nos dois graus:
+Sistema web para encontrar **processos judiciais em que um CPF ou CNPJ figura como parte**. Ele roda em
+qualquer hospedagem PHP comum, sem Composer e sem banco de dados externo. A primeira versão consulta o
+**Tribunal de Justiça de São Paulo (TJSP)** pelo e-SAJ, nos dois graus:
 
 | Fonte     | O que cobre |
 |-----------|-------------|
@@ -9,98 +10,106 @@ A primeira versão consulta o **Tribunal de Justiça de São Paulo (TJSP)** via 
 | `tjsp-2g` | 2º grau: recursos (apelações, agravos) e ações originárias |
 
 > **E os processos "municipais"?** Municípios não têm Justiça própria. Toda ação judicial envolvendo uma
-> prefeitura paulista (cobrança de IPTU/ISS, multas, ações contra o município) corre no TJSP, então já aparece
-> nas buscas acima, em geral nas varas de Fazenda Pública ou de Execuções Fiscais Municipais. Processos
-> **administrativos** das prefeituras (SEI, protocolos, dívida ativa não ajuizada) ficam em sistemas de cada
-> município. Esses sistemas, de modo geral, não permitem busca pública por CPF e ficam para uma próxima etapa.
+> prefeitura paulista (cobrança de IPTU/ISS, multas, ações contra o município) corre no TJSP e já aparece nas
+> buscas acima. Processos **administrativos** das prefeituras ficam em sistemas de cada município, que em geral
+> não permitem busca pública por CPF.
+
+## Requisitos da hospedagem
+
+- PHP **8.0 ou superior**, com as extensões `curl`, `dom`, `mbstring` e `pdo_sqlite`. A maioria das
+  hospedagens já vem com elas; confira no painel (cPanel → "Selecionar versão do PHP").
+- Permissão para o PHP **fazer requisições externas** (cURL para `esaj.tjsp.jus.br` e `brasilapi.com.br`).
+- Apache com `.htaccess` (padrão em cPanel/Hostinger/HostGator/Locaweb). Em Nginx, veja "Segurança" abaixo.
 
 ## Instalação
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-```
+1. **Baixe o código.** No GitHub, abra a branch deste projeto e use **Code → Download ZIP**.
+2. **Envie para a hospedagem.** Pelo Gerenciador de Arquivos ou FTP, crie uma pasta dentro de `public_html`
+   (ex.: `public_html/processos`) e envie todo o conteúdo, **inclusive os arquivos `.htaccess`**. Alguns
+   clientes de FTP escondem arquivos que começam com ponto.
+3. **Crie o `config.php`.** Copie `config.exemplo.php` para `config.php`.
+4. **Defina a senha.** Acesse `https://seudominio.com.br/processos/`. Na primeira vez aparece a tela
+   "Definir senha de acesso". Digite uma senha (mínimo 10 caracteres) e o sistema mostra uma linha como
+   `'senha_hash' => '$2y$10$...',`. Cole essa linha no `config.php`, no lugar de `'senha_hash' => '',`.
+5. **(Opcional) Preencha seus documentos.** Em `'documentos'` e `'nomes'` do `config.php`, coloque seu CPF,
+   CNPJs e nome completo. Eles já virão preenchidos no formulário.
+6. **Verifique a pasta `dados/`.** Ela precisa permitir escrita (permissão 755 ou 775); é onde fica o histórico.
 
 ## Uso
 
-```bash
-# Seu CPF e suas empresas
-consulta buscar 123.456.789-09 12.345.678/0001-90
+Entre com a senha, confira os CPFs/CNPJs e clique em **Consultar**. Para cada documento aparecem:
 
-# Lendo de um arquivo (copie meus_documentos.exemplo.txt -> meus_documentos.txt)
-consulta buscar -a meus_documentos.txt
+- a empresa, no caso de CNPJ (razão social, situação e cidade, pela BrasilAPI);
+- os processos, com número, classe, assunto, foro, data e link para abrir no TJSP;
+- o selo **NOVO** nos processos que não tinham aparecido em consultas anteriores;
+- avisos de erro, se alguma fonte falhar (CAPTCHA, site fora do ar, mudança de layout).
 
-# Com partes, advogados e movimentações de cada processo (mais lento)
-consulta buscar -a meus_documentos.txt --detalhes
+Opções do formulário:
 
-# Processos antigos às vezes não têm o documento cadastrado: busque também pelo nome
-consulta buscar 123.456.789-09 --nome "FULANO DE TAL DA SILVA"
-consulta buscar 12.345.678/0001-90 --incluir-razao-social   # usa a razão social da Receita
+- **Abrir cada processo:** traz partes, advogados e movimentações. É mais lento.
+- **Buscar também pela razão social:** pega processos antigos de empresas sem CNPJ cadastrado.
+- **Nomes completos:** idem para pessoas físicas.
+- **Exportar:** depois da consulta, baixe uma **planilha CSV** (abre direto no Excel) ou **JSON**.
 
-# Exportar
-consulta buscar -a meus_documentos.txt --formato csv -o resultados.csv
-consulta buscar -a meus_documentos.txt --formato json -o resultados.json
+### Consulta automática (cron)
 
-# Utilitários
-consulta validar 123.456.789-09     # valida CPF/CNPJ (inclusive CNPJ alfanumérico)
-consulta fontes                     # lista as fontes
+Se a hospedagem tiver **Tarefas Cron** (cPanel → Cron Jobs), dá para receber por e-mail só quando surgir
+processo novo:
+
+```
+0 8 * * 1  php /home/SEU_USUARIO/public_html/processos/cli.php --somente-novos
 ```
 
-Sem instalar, use `python -m consulta ...`.
-
-### Acompanhamento (processos novos)
-
-Cada consulta é gravada em `~/.consultacpfcnpj/historico.db` (SQLite). Nas consultas seguintes, processos
-que ainda não tinham aparecido para aquele documento são marcados com **[NOVO]** (ou `"novo": true` no JSON).
-Para monitorar, agende uma execução periódica, por exemplo no `cron`:
-
-```cron
-0 8 * * 1  cd ~/ConsultaCPFCNPJ && .venv/bin/consulta buscar -a meus_documentos.txt -o ~/processos.txt
-```
-
-Use `--sem-historico` para não gravar nada.
-
-### Códigos de saída
-
-`0` = sucesso, `1` = parâmetros inválidos, `2` = alguma fonte falhou. Nesse caso o erro aparece no relatório
-com `!`, por exemplo CAPTCHA, site fora do ar ou mudança de layout.
-
-## Como funciona
-
-- `consulta/documentos.py`: valida e formata CPF/CNPJ, incluindo o **CNPJ alfanumérico** em vigor desde julho/2026.
-- `consulta/fontes/tjsp_esaj.py`: faz a busca pública do e-SAJ (`cbPesquisa=DOCPARTE`/`NMPARTE`, todos os foros),
-  segue a paginação e trata o redirecionamento direto quando há um único processo. Também detecta CAPTCHA,
-  "nenhum resultado" e respostas inesperadas.
-- `consulta/receita.py`: dados cadastrais do CNPJ (razão social, situação, sócios) pela [BrasilAPI](https://brasilapi.com.br).
-- `consulta/historico.py`: histórico local para destacar processos novos.
-- `consulta/cli.py`: linha de comando e saídas em tabela, JSON e CSV.
-
-Para adicionar outro tribunal, crie uma subclasse de `Fonte` (`consulta/fontes/base.py`) com `buscar_documento`,
-`buscar_nome` e `detalhar`, e registre-a em `consulta/fontes/__init__.py`.
-
-## Limitações e cuidados
-
-- **Processos em segredo de justiça** (família, alguns criminais) não aparecem ou aparecem sem detalhes na
-  consulta pública. Para vê-los, acesse o e-SAJ com certificado digital ou peça uma **certidão de distribuição**
-  no próprio TJSP.
-- **O layout do e-SAJ pode mudar.** Além disso, o TJSP está migrando gradualmente para o **eproc**. Se uma consulta
-  retornar "resposta inesperada", provavelmente será preciso ajustar o parser ou acrescentar uma fonte eproc.
-  Os testes (`pytest`) usam páginas de exemplo em `tests/fixtures/`, que podem ser atualizadas com HTML real.
-- **CAPTCHA:** se o tribunal exigir, a ferramenta avisa e indica o endereço para consulta manual. Ela não tenta
-  contornar o CAPTCHA.
-- **Uso responsável:** a ferramenta espera 1,5 s entre requisições (`--atraso`). Ela foi feita para consultar os
-  **seus próprios documentos** ou documentos de quem autorizou. Dados de terceiros estão sujeitos à LGPD.
-- Esta ferramenta não substitui uma certidão oficial. Para fins formais (licitações, financiamentos etc.), emita
-  as certidões do TJSP, da Justiça Federal (TRF3) e da Justiça do Trabalho (TRT2/TRT15).
-
-## Próximos passos sugeridos
-
-- Justiça Federal da 3ª Região (TRF3, PJe) e Justiça do Trabalho (TRT2/TRT15).
-- Fonte eproc do TJSP, à medida que a migração avançar.
-- Emissão automática de certidões e notificação por e-mail quando surgir processo novo.
-
-## Testes
+Por SSH, `php cli.php --ajuda` mostra todas as opções. Por exemplo:
 
 ```bash
-pytest
+php cli.php                                    # usa os documentos do config.php
+php cli.php 123.456.789-09 --nome="FULANO DE TAL" --detalhes
+php cli.php --formato=csv > processos.csv
 ```
+
+## Segurança
+
+- O sistema inteiro é protegido por **senha**, guardada só como hash no `config.php`. Ele também tem
+  proteção contra CSRF e espera alguns segundos após cada senha errada.
+- Os `.htaccess` bloqueiam o acesso pelo navegador a `config.php`, `cli.php`, `src/`, `dados/` e `tests/`.
+- Para mais segurança, aponte `'historico'` no `config.php` para uma pasta **fora** de `public_html`
+  (ex.: `/home/SEU_USUARIO/consulta-dados/historico.db`).
+- **Nginx** ignora `.htaccess`. Nesse caso, mova o histórico para fora da pasta pública, como acima, e bloqueie
+  `/dados`, `/src` e `/tests` na configuração do servidor.
+- Use **HTTPS** (Let's Encrypt é gratuito na maioria das hospedagens).
+
+## Estrutura
+
+```
+index.php            interface web (login, formulário, resultados, exportação)
+cli.php              linha de comando / cron
+config.exemplo.php   modelo de configuração
+src/Documento.php    validação de CPF/CNPJ (inclusive CNPJ alfanumérico, em vigor desde jul/2026)
+src/EsajTjsp.php     busca no e-SAJ: listagem paginada, redirecionamento de resultado único, detalhes,
+                     detecção de CAPTCHA e de "nenhum resultado"
+src/Receita.php      dados do CNPJ via BrasilAPI
+src/Historico.php    histórico SQLite para marcar processos novos
+src/Consulta.php     orquestra documentos × fontes
+src/Exportar.php     CSV (Excel), JSON e texto
+tests/run.php        testes: php tests/run.php
+```
+
+Para adicionar outro tribunal, crie uma classe que estenda `Fonte` (`src/Fonte.php`) e registre-a em
+`Consulta::FONTES`.
+
+## Limitações
+
+- **Ainda não testado contra o site real do TJSP.** Os testes usam páginas de exemplo em `tests/fixtures/`.
+  Se aparecer "resposta inesperada do e-SAJ", salve a página da consulta feita no navegador e use-a para
+  ajustar o parser.
+- **Bloqueio de IPs de servidor.** Alguns tribunais bloqueiam ou pedem CAPTCHA para IPs de datacenter. Se isso
+  acontecer na hospedagem, a ferramenta avisa e mostra o link para a consulta manual. Ela não tenta contornar o
+  CAPTCHA.
+- **Migração para o eproc.** O TJSP está migrando gradualmente para o eproc; uma fonte nova pode ser necessária.
+- **Tempo de execução.** Algumas hospedagens limitam o tempo de cada página (30–60 s). Com muitos documentos ou
+  com "Abrir cada processo" marcado, consulte menos documentos por vez ou use o `cli.php` pelo cron.
+- **Segredo de justiça.** Esses processos não aparecem na consulta pública, ou aparecem sem detalhes.
+- **Não substitui certidão.** Para fins formais, emita as certidões do TJSP, TRF3 e TRT2/TRT15.
+- **Uso responsável.** Feito para consultar **seus próprios documentos** ou de quem autorizou; dados de
+  terceiros estão sujeitos à LGPD.
