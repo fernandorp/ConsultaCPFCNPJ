@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+*.db
+resultados*.json
+resultados*.csv
+# arquivo com seus próprios documentos — não versionar
+meus_documentos.txt

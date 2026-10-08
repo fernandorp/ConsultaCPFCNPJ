@@ -1,0 +1,4 @@
+# Copie para meus_documentos.txt (ignorado pelo git) e coloque um documento por linha.
+# Comentários com # são ignorados.
+529.982.247-25        # meu CPF (exemplo)
+11.222.333/0001-81    # minha empresa (exemplo)
